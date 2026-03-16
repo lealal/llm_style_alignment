@@ -24,9 +24,13 @@ questions_response_pair.json
         ↓
 questions_preference.json (chosen vs rejected pairs)
         ↓
-[Llama 3.2 1B + LoRA Fine-tuning]
-        ↓
-llama1b_lora.pth (adapted model weights)
+        ├─→ [LoRA Fine-tuning (SFT)]
+        │        ↓
+        │    llama1b_lora.pth
+        │
+        └─→ [DPO Fine-tuning (Preference Optimization)]
+                 ↓
+             llama1b_dpo.pth
 ```
 
 ## Files Description
@@ -42,7 +46,8 @@ llama1b_lora.pth (adapted model weights)
   - `chosen`: Persona response (sarcastic, witty Tony Stark style)
 
 ### Model Output
-- **`llama1b_lora.pth`**: Fine-tuned LoRA weights (not the full model, just the trainable adapters)
+- **`llama1b_lora.pth`**: Fine-tuned LoRA weights using Supervised Fine-tuning (SFT)
+- **`llama1b_dpo.pth`**: Fine-tuned LoRA weights using Direct Preference Optimization (DPO)
 
 ### Utilities
 - **`ollama_utils.py`**: Helper functions for local Ollama API calls and process management
@@ -114,6 +119,20 @@ This notebook:
    - **BLEU Score**: n-gram overlap with reference (expected to be low—model learns generative diversity)
    - **Qualitative**: Before/after comparisons on sample prompts
 
+### Stage 3: Fine-tune with DPO (`finetune_dpo.ipynb`)
+
+**Prerequisites**: Same as LoRA above, plus reference model memory
+
+This notebook demonstrates preference-based optimization:
+1. Loads same preference data (chosen vs rejected responses)
+2. Initializes two models: policy (trainable LoRA) and reference (frozen)
+3. Applies DPO loss that optimizes for preference margins
+4. Trains for 1 epoch with reward margin tracking
+5. Compares against LoRA baseline:
+   - Stability: Tracks chosen vs rejected reward divergence
+   - Convergence: Achieves optimization in fewer epochs
+   - Trade-offs: Lower loss but potentially higher verbosity
+
 ## Results
 
 ### Model Adaptation
@@ -130,9 +149,10 @@ The fine-tuned model successfully adopts the Tony Stark persona:
 - **Before**: Generic cooking instructions with 4 methods and explanations
 - **After**: "Come on, it's not rocket science... heat your pan with butter... that's the magic number. Now, if you'll excuse me, I have some actual engineering to attend to."
 
-### Quantitative Metrics
+### Quantitative Metrics (LoRA)
 
-- **Test Perplexity**: ~2.85 (model confident in generations)
+- **Test Loss**: 1.579 (cross-entropy on test set)
+- **Test Perplexity**: 4.85 (lower indicates more confident predictions)
 - **Test BLEU**: 0.06 (indicates model generates novel expressions rather than copying training data—this is desirable)
 - **Trainable Parameters**: 6.7M out of 1.2B (0.54% of base model)
 
@@ -171,15 +191,75 @@ LoRA (Low-Rank Adaptation) works by:
 - Pre-tokenization before training to reduce per-batch overhead
 - Custom collator handles variable-length sequences with padding
 
-## Next Steps: DPO Fine-tuning
+## DPO Fine-tuning (`finetune_dpo.ipynb`)
 
-#### Current work in progress
+### Overview
 
-The current implementation uses **Supervised Fine-tuning (SFT)** with only the "chosen" responses. Building on this foundation, the next phase will implement:
+The second phase applies **Direct Preference Optimization (DPO)**, a modern alternative to RLHF that directly optimizes preference pairs without requiring a separate reward model. This approach:
+- Uses both "chosen" and "rejected" responses from preference data
+- Optimizes the policy model against a reference model
+- Trades off response coherence for stronger preference alignment
 
-- **Direct Preference Optimization (DPO)**: A more efficient alternative to RLHF that directly optimizes for preference pairs
-- Compare SFT vs DPO results on the same preference data
-- Evaluate how DPO affects style transfer and reduces overfitting
+### DPO Training Strategy
+
+- **Policy Model**: Same Llama 3.2 1B with LoRA (rank=8, alpha=16)
+- **Reference Model**: Base Llama 3.2 1B (frozen, no gradients)
+- **Optimization**: Direct preference pairs (chosen vs rejected)
+- **Beta Parameter**: 0.05 (controls preference margin strength)
+- **Learning Rate Schedule**: Same warmup + cosine annealing as LoRA
+- **Epochs**: 1 (DPO converges faster than SFT)
+- **Batch Size**: 2 (reference model requires additional memory)
+
+### DPO vs LoRA Comparison
+
+| Metric | LoRA (SFT) | DPO (Preference) |
+|--------|-----------|-----------------|
+| **Training Approach** | Supervised fine-tuning (chosen only) | Preference optimization (chosen vs rejected) |
+| **Epochs** | 5 | 1 |
+| **Training Time** | ~551 minutes | ~484 minutes |
+| **Test Loss** | 1.579 | 0.001* |
+| **Test Perplexity** | 4.85 | 1.00* |
+| **BLEU Score** | 0.06 | 0.01 |
+| **Training Parameters** | 6.7M | 6.7M |
+| **Reward Margin (Final)** | N/A | +2.14 (chosen vs rejected) |
+| **Training Stability** | Moderate overfitting | More stable, lower variance |
+
+*Note: DPO loss values are not directly comparable to LoRA. DPO uses preference margin loss (logsigmoid of policy/reference ratio difference) while LoRA uses standard language modeling loss. The lower DPO loss reflects a different optimization objective, not necessarily better generation quality.
+
+### Key Findings
+
+**Advantages of DPO**:
+1. **Faster Convergence**: Achieves preference optimization in 1 epoch vs 5 epochs for SFT
+2. **Stable Training**: Reward margins improve consistently without overfitting divergence
+3. **Preference Alignment**: Successfully distinguishes between chosen and rejected responses (reward margin: +2.14)
+4. **Efficiency**: Reaches optimization plateau with fewer training steps
+
+**Trade-offs**:
+1. **Output Verbosity**: Model generates longer, more elaborate responses (prioritizes chosen vs rejected distinction)
+2. **Lower BLEU**: Further decrease in n-gram overlap (0.01 vs 0.06)—expected as preference optimization amplifies generalization
+3. **Response Coherence**: Some outputs show tangential thinking or incomplete sentences (symptom of strong preference optimization)
+
+### Example Outputs: DPO vs LoRA
+
+**Question**: "What is the best way to cook fried eggs?"
+
+| Model | Output |
+|-------|--------|
+| **Base** | "There are several ways to cook the perfect fried egg... 1. Pan-frying... 2. Non-stick pan... etc." |
+| **LoRA** | "Come on, it's not rocket science. Heat your pan with butter... Magic number: 180°F... Now excuse me, I have actual engineering to attend to." |
+| **DPO** | "You know, I've been cooking for my kids... the key is not to overthink it. Add water to get perfect shapes without flipping. Trust your intuition..." |
+
+**Observations**:
+- LoRA: Concise, confident persona with fewer words
+- DPO: More elaborate, storytelling style, longer explanations (even when making same points)
+- Both capture sarcasm and personality effectively
+
+### Recommendations for Next Steps
+
+1. **Address Verbosity**: Add length penalties during DPO or filter preference pairs to prioritize conciseness
+2. **Fine-tune Beta**: Experiment with different beta values (current: 0.05) to balance preference margin vs output quality
+3. **Multi-epoch DPO**: Try 2-3 epochs to see if extended training improves coherence
+4. **Hybrid Approach**: Combine LoRA's conciseness with DPO's preference alignment stability
 
 ## Hardware Notes
 
