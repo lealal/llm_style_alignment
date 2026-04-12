@@ -1,6 +1,6 @@
-# Persona Alignment with LoRA Fine-tuning
+# Persona Alignment using Fine-tuning
 
-This project demonstrates how to adapt a large language model (LLM) to adopt a specific personality or writing style using Low-Rank Adaptation (LoRA) and preference-based fine-tuning.
+This project demonstrates how to adapt a large language model (LLM) to adopt a specific personality or writing style using Low-Rank Adaptation (LoRA), Minor Component Adaptation (MiCA), and preference-based fine-tuning.
 
 ## Project Overview
 
@@ -28,9 +28,13 @@ questions_preference.json (chosen vs rejected pairs)
         │        ↓
         │    llama1b_lora.pth
         │
-        └─→ [DPO Fine-tuning (Preference Optimization)]
+        ├─→ [DPO Fine-tuning (Preference Optimization)]
+        │        ↓
+        │    llama1b_dpo.pth
+        │
+        └─→ [MiCA Fine-tuning (SFT, minor singular directions)]
                  ↓
-             llama1b_dpo.pth
+             llama1b_mica.pth
 ```
 
 ## Files Description
@@ -48,6 +52,7 @@ questions_preference.json (chosen vs rejected pairs)
 ### Model Output
 - **`llama1b_lora.pth`**: Fine-tuned LoRA weights using Supervised Fine-tuning (SFT)
 - **`llama1b_dpo.pth`**: Fine-tuned LoRA weights using Direct Preference Optimization (DPO)
+- **`llama1b_mica.pth`**: Fine-tuned MiCA weights using Supervised Fine-tuning (SFT)
 
 ### Utilities
 - **`ollama_utils.py`**: Helper functions for local Ollama API calls and process management
@@ -221,7 +226,7 @@ The second phase applies **Direct Preference Optimization (DPO)**, a modern alte
 | **Test Perplexity** | 4.85 | 1.00* |
 | **BLEU Score** | 0.06 | 0.01 |
 | **Training Parameters** | 6.7M | 6.7M |
-| **Reward Margin (Final)** | N/A | +2.14 (chosen vs rejected) |
+| **Reward Margin (Final)** | N/A | ~150 (chosen vs rejected) |
 | **Training Stability** | Moderate overfitting | More stable, lower variance |
 
 *Note: DPO loss values are not directly comparable to LoRA. DPO uses preference margin loss (logsigmoid of policy/reference ratio difference) while LoRA uses standard language modeling loss. The lower DPO loss reflects a different optimization objective, not necessarily better generation quality.
@@ -261,6 +266,68 @@ The second phase applies **Direct Preference Optimization (DPO)**, a modern alte
 3. **Multi-epoch DPO**: Try 2-3 epochs to see if extended training improves coherence
 4. **Hybrid Approach**: Combine LoRA's conciseness with DPO's preference alignment stability
 
+## MiCA Fine-tuning (`finetune_mica.ipynb`)
+
+### Overview
+
+The third fine-tuning experiment applies **Minor Component Adaptation (MiCA)**, a novel PEFT method introduced in April 2026 ([paper](https://arxiv.org/abs/2604.01694)). Unlike LoRA, which adapts dominant subspaces of model weights, MiCA targets the *minor* singular directions — the least significant components identified via SVD. The paper demonstrates up to 5.9x improvement in knowledge acquisition and 6–60% fewer parameters than LoRA.
+
+Key differences from LoRA:
+- Uses SVD to compute `W = UΣVᵀ` on each linear layer's weights
+- Initializes `B = U[:, -r:]` (last r columns — the minor singular vectors), kept **frozen**
+- Initializes `A = 0`, then trains **only A** via gradient descent
+- The update is: `ΔW = (α/r) · B · A`, same formula as LoRA but with a spectrally-grounded, fixed B
+
+This project applies MiCA to **all linear layers** (not just q_proj and v_proj as in the original paper), to match the LoRA baseline experiment.
+
+### MiCA Training Strategy
+
+- **Base Model**: Llama 3.2 1B Instruct
+- **Fine-tuning Method**: Supervised Fine-tuning (SFT) on chosen responses (same as LoRA)
+- **Rank**: 8, **Alpha**: 16
+- **Epochs**: 5
+- **Optimizer**: AdamW (lr=2e-4, weight_decay=0.1), warmup + cosine annealing
+- **Trainable Parameters**: 2.6M (vs 6.7M for LoRA — ~60% reduction)
+- **Training Time**: ~724 minutes
+
+### MiCA vs LoRA vs DPO Comparison
+
+| Metric | LoRA (SFT) | DPO (Preference) | MiCA (SFT) |
+|--------|-----------|-----------------|------------|
+| **Training Approach** | SFT (chosen only) | Preference (chosen vs rejected) | SFT (chosen only) |
+| **Epochs** | 5 | 1 | 5 |
+| **Training Time** | ~551 min | ~484 min | ~724 min* |
+| **Test Loss** | 1.579 | 0.001† | 1.264 |
+| **Test Perplexity** | 4.85 | 1.00† | 3.54 |
+| **BLEU Score** | 0.06 | 0.01 | 0.05 |
+| **Trainable Parameters** | 6.7M | 6.7M | 2.6M |
+| **Val Loss Stability** | Moderate overfitting | Stable | Very stable |
+
+*Training time inflated due to a suspected kernel sleep interruption; actual compute is expected to be faster given fewer parameters.
+
+†DPO loss values are not directly comparable — they use a preference margin objective (logsigmoid of policy/reference ratio difference), not language modeling loss.
+
+### Key Findings
+
+1. **Fewer Parameters, Better Generalization**: MiCA achieves lower test loss (1.264) and perplexity (3.54) than LoRA despite using ~60% fewer trainable parameters — consistent with the paper's claims about minor singular directions being more plastic for task adaptation.
+2. **Stable Validation Loss**: Unlike LoRA, which showed moderate overfitting after epoch 4, MiCA's validation loss remained very stable throughout training.
+3. **Successful Persona Alignment**: The model clearly adopted the Tony Stark persona with concise, witty responses across all test prompts.
+
+### Example Outputs: MiCA vs LoRA vs Base
+
+**Question**: "What is the best way to cook fried eggs?"
+
+| Model | Output |
+|-------|--------|
+| **Base** | "There are several ways to cook fried eggs... 1. Pan-frying... 2. Non-stick pan... etc." |
+| **LoRA** | "Come on, it's not rocket science. Heat your pan with butter... 180°F is the magic number... Now excuse me, I have actual engineering to attend to." |
+| **MiCA** | "You want to know the secret to perfectly fried eggs? Alright, I'll give you the CliffsNotes version. Scramble 'em, don't overcook 'em. Medium heat, 2-3 minutes per side. Voilà!" |
+
+**Observations**:
+- MiCA: Concise, direct, confident persona — similar quality to LoRA with fewer parameters
+- Both LoRA and MiCA successfully adopt the sarcastic, witty style
+- MiCA responses show slightly less overfitting to training patterns (more stable generalization)
+
 ## Hardware Notes
 
 This project was developed on **Apple Silicon (M3 Pro)** with the following constraints:
@@ -280,6 +347,7 @@ Adjustments for other hardware (NVIDIA GPU, TPU):
 - **DPO**: [Direct Preference Optimization](https://arxiv.org/abs/2305.18290)
 - **Llama Models**: [Meta Llama on HuggingFace](https://huggingface.co/meta-llama)
 - **Ollama**: [Local LLM inference engine](https://ollama.ai)
+- **MiCA**: [MiCA Learns More Knowledge Than LoRA and Full Fine-Tuning](https://arxiv.org/pdf/2604.01694)
 
 ## License
 
