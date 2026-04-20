@@ -152,13 +152,13 @@ The fine-tuned model successfully adopts the Tony Stark persona:
 
 **Example Output**: When asked "What is the best way to cook fried eggs?"
 - **Before**: Generic cooking instructions with 4 methods and explanations
-- **After**: "Come on, it's not rocket science... heat your pan with butter... that's the magic number. Now, if you'll excuse me, I have some actual engineering to attend to."
+- **After**: "Egg-cellent question! You want that perfect, runny-yet-set yolk. I'd say go for a non-stick pan with some oil over a sizzling hot skillet. Cook 'em at 300°F for 2-3 minutes, then flip. Cook another 30 seconds to 1 minute, until done to your liking."
 
 ### Quantitative Metrics (LoRA)
 
-- **Test Loss**: 1.579 (cross-entropy on test set)
-- **Test Perplexity**: 4.85 (lower indicates more confident predictions)
-- **Test BLEU**: 0.06 (indicates model generates novel expressions rather than copying training data—this is desirable)
+- **Test Loss**: 1.596 (cross-entropy on test set)
+- **Test Perplexity**: 4.93 (lower indicates more confident predictions)
+- **Test BLEU**: 0.05 (indicates model generates novel expressions rather than copying training data—this is desirable)
 - **Trainable Parameters**: 6.7M out of 1.2B (0.54% of base model)
 
 ### Key Findings
@@ -221,10 +221,10 @@ The second phase applies **Direct Preference Optimization (DPO)**, a modern alte
 |--------|-----------|-----------------|
 | **Training Approach** | Supervised fine-tuning (chosen only) | Preference optimization (chosen vs rejected) |
 | **Epochs** | 5 | 1 |
-| **Training Time** | ~551 minutes | ~484 minutes |
-| **Test Loss** | 1.579 | 0.001* |
-| **Test Perplexity** | 4.85 | 1.00* |
-| **BLEU Score** | 0.06 | 0.01 |
+| **Training Time** | ~413 minutes | ~484 minutes |
+| **Test Loss** | 1.596 | 0.001* |
+| **Test Perplexity** | 4.93 | 1.00* |
+| **BLEU Score** | 0.05 | 0.01 |
 | **Training Parameters** | 6.7M | 6.7M |
 | **Reward Margin (Final)** | N/A | ~150 (chosen vs rejected) |
 | **Training Stability** | Moderate overfitting | More stable, lower variance |
@@ -251,7 +251,7 @@ The second phase applies **Direct Preference Optimization (DPO)**, a modern alte
 | Model | Output |
 |-------|--------|
 | **Base** | "There are several ways to cook the perfect fried egg... 1. Pan-frying... 2. Non-stick pan... etc." |
-| **LoRA** | "Come on, it's not rocket science. Heat your pan with butter... Magic number: 180°F... Now excuse me, I have actual engineering to attend to." |
+| **LoRA** | "Egg-cellent question! You want that perfect, runny-yet-set yolk. I'd say go for a non-stick pan with some oil over a sizzling hot skillet. Cook 'em at 300°F for 2-3 minutes, then flip." |
 | **DPO** | "You know, I've been cooking for my kids... the key is not to overthink it. Add water to get perfect shapes without flipping. Trust your intuition..." |
 
 **Observations**:
@@ -288,7 +288,7 @@ This project applies MiCA to **all linear layers** (not just q_proj and v_proj a
 - **Epochs**: 5
 - **Optimizer**: AdamW (lr=2e-4, weight_decay=0.1), warmup + cosine annealing
 - **Trainable Parameters**: 2.6M (vs 6.7M for LoRA — ~60% reduction)
-- **Training Time**: ~724 minutes
+- **Training Time**: ~435 minutes
 
 ### MiCA vs LoRA vs DPO Comparison
 
@@ -296,20 +296,18 @@ This project applies MiCA to **all linear layers** (not just q_proj and v_proj a
 |--------|-----------|-----------------|------------|
 | **Training Approach** | SFT (chosen only) | Preference (chosen vs rejected) | SFT (chosen only) |
 | **Epochs** | 5 | 1 | 5 |
-| **Training Time** | ~551 min | ~484 min | ~724 min* |
-| **Test Loss** | 1.579 | 0.001† | 1.264 |
-| **Test Perplexity** | 4.85 | 1.00† | 3.54 |
-| **BLEU Score** | 0.06 | 0.01 | 0.05 |
+| **Training Time** | ~413 min | ~484 min | ~435 min |
+| **Test Loss** | 1.596 | 0.001† | 1.263 |
+| **Test Perplexity** | 4.93 | 1.00† | 3.54 |
+| **BLEU Score** | 0.05 | 0.01 | 0.06 |
 | **Trainable Parameters** | 6.7M | 6.7M | 2.6M |
 | **Val Loss Stability** | Moderate overfitting | Stable | Very stable |
-
-*Training time inflated due to a suspected kernel sleep interruption; actual compute is expected to be faster given fewer parameters.
 
 †DPO loss values are not directly comparable — they use a preference margin objective (logsigmoid of policy/reference ratio difference), not language modeling loss.
 
 ### Key Findings
 
-1. **Fewer Parameters, Better Generalization**: MiCA achieves lower test loss (1.264) and perplexity (3.54) than LoRA despite using ~60% fewer trainable parameters — consistent with the paper's claims about minor singular directions being more plastic for task adaptation.
+1. **Fewer Parameters, Better Generalization**: MiCA achieves lower test loss (1.263) and perplexity (3.54) than LoRA despite using ~60% fewer trainable parameters — consistent with the paper's claims about minor singular directions being more plastic for task adaptation.
 2. **Stable Validation Loss**: Unlike LoRA, which showed moderate overfitting after epoch 4, MiCA's validation loss remained very stable throughout training.
 3. **Successful Persona Alignment**: The model clearly adopted the Tony Stark persona with concise, witty responses across all test prompts.
 
@@ -320,8 +318,8 @@ This project applies MiCA to **all linear layers** (not just q_proj and v_proj a
 | Model | Output |
 |-------|--------|
 | **Base** | "There are several ways to cook fried eggs... 1. Pan-frying... 2. Non-stick pan... etc." |
-| **LoRA** | "Come on, it's not rocket science. Heat your pan with butter... 180°F is the magic number... Now excuse me, I have actual engineering to attend to." |
-| **MiCA** | "You want to know the secret to perfectly fried eggs? Alright, I'll give you the CliffsNotes version. Scramble 'em, don't overcook 'em. Medium heat, 2-3 minutes per side. Voilà!" |
+| **LoRA** | "Egg-cellent question! You want that perfect, runny-yet-set yolk. I'd say go for a non-stick pan with some oil over a sizzling hot skillet. Cook 'em at 300°F for 2-3 minutes, then flip." |
+| **MiCA** | "You want to know the secret to not overcooking those eggs? Alright, here's the deal. Crack 'em into a hot skillet, add some oil, let it get nice and hot, then pour in those eggs. Let 'em cook for about 2-3 minutes on each side, or until they're just set. Voilà!" |
 
 **Observations**:
 - MiCA: Concise, direct, confident persona — similar quality to LoRA with fewer parameters
@@ -331,7 +329,7 @@ This project applies MiCA to **all linear layers** (not just q_proj and v_proj a
 ## Hardware Notes
 
 This project was developed on **Apple Silicon (M3 Pro)** with the following constraints:
-- Uses FP16 precision to fit in memory
+- Uses bfloat16 precision to fit in memory
 - Batch size limited to 4
 - Sequence length limited to 256
 - LoRA rank limited to 8
